@@ -11,7 +11,9 @@
     'use strict';
 
     // Function to count bookmarks by artist
-    var artists = {};
+    let artists = {};
+    let sortedArtists = [];
+    let debounceTimer = null;
 
     // Function to check if the bookmarks list has changed
     const countIllusts = (artist) => Object.keys(artist.illustrations).length;
@@ -85,10 +87,15 @@
                 artist.illustrations[illustId] = illust;
             }
         });
-        console.log(JSON.stringify(artists));
-        artists = Object.values(artists).sort(illustComparator);
-        console.log(JSON.stringify(artists));
+        sortedArtists = Object.values(artists).sort(illustComparator);
 
+        requestAnimationFrame(renderSummary);
+        //renderSummary();
+    }
+
+
+    // Function to render the summary UI
+    function renderSummary() {
         // Clear previous summary if exists
         const existingSummary = document.getElementById('artist-summary');
         if (existingSummary) {
@@ -131,7 +138,7 @@
         let totalCount = 0;
         const artistContainer = document.createElement('ol');
         //Object.entries(artists).forEach(([id, artist]) => {
-        Object.values(artists).forEach((artist) => {
+        Object.values(sortedArtists).forEach((artist) => {
             let count = countIllusts(artist);
             // Create a list item for each artist
             const artistItem = document.createElement('li');
@@ -171,57 +178,78 @@
             totalCount += count;
         });
         const totalContainer = document.createElement('p');
-        totalContainer.innerHTML = `<p>Total: ${totalCount}</p>`;
+        totalContainer.innerHTML = `<span>Total: ${totalCount}</span>`;
+        const logButton = document.createElement('button');
+        logButton.innerHTML = `Log Items`;
+        logButton.addEventListener('click', () => {
+            //console.log(JSON.stringify(artists));
+            console.log(JSON.stringify(sortedArtists));
+        });
 
         summaryContent.appendChild(artistContainer);
         summaryContent.appendChild(totalContainer);
+        summaryContent.appendChild(logButton);
         summaryDiv.appendChild(title);
         summaryDiv.appendChild(summaryContent);
         document.body.appendChild(summaryDiv);
     }
 
+    // Function to debounce the summarizeBookmarks call
+    function debouncedSummarize() {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(summarizeBookmarks, 1000);
+    }
     // Set up a MutationObserver to monitor changes in the bookmark list
     const observer = new MutationObserver((mutations) => {
+        let added = false;
         mutations.forEach(mutation => {
             if (mutation.addedNodes.length) {
-                summarizeBookmarks(); // Recalculate bookmarks whenever new nodes are added
+                added = true;
             }
         });
+        if (added){
+            debouncedSummarize(); // Recalculate bookmarks whenever new nodes are added
+        }
     });
-
-    // Start observing the bookmark list for changes
-    const targetNode = document.querySelector('ul'); // Adjust the selector if needed
-    if (targetNode) {
-        observer.observe(targetNode, {
-            childList: true, // Observe direct children
-            subtree: true,   // Observe all descendants
-        });
-    }
 
     // Function to monitor URL changes
     function checkUrlChange() {
         // Delay execution to allow content to load
         setTimeout(() => {
-            summarizeBookmarks(); // Recalculate the artist summary
+            debouncedSummarize(); // Recalculate the artist summary
         }, 1000); // Adjust the timeout as needed
     }
 
-    var previousHash = null;
+    let previousHash = null;
     // Function to check if the bookmarks list has changed
     function checkForChanges() {
         const currentHash = location.href; // Check the URL hash
         if (currentHash !== previousHash) {
             previousHash = currentHash; // Update the previous hash
-            summarizeBookmarks(); // Recalculate the artist summary
+            debouncedSummarize(); // Recalculate the artist summary
         }
     }
 
     // Initial summary calculation when the page loads
     window.addEventListener('load', () => {
         setTimeout(() => {
-            summarizeBookmarks();
+            debouncedSummarize();
             previousHash = location.href; // Set initial hash
-            setInterval(checkForChanges, 1000); // Poll every second for URL changes
+            setInterval(checkForChanges, 3000); // Poll every second for URL changes
+            // Start observing the bookmark list for changes
+
+            let targetNode = null;
+            targetNode = document.querySelector('ul');
+            if (targetNode) {
+                observer.observe(targetNode, { childList: true, subtree: true, });
+            }
+
+
+            targetNode = document.querySelector('#root');
+            if (targetNode) {
+                observer.observe(targetNode, { childList: true, subtree: true, });
+            }
+
         }, 3000); // Wait to load
     });
 
