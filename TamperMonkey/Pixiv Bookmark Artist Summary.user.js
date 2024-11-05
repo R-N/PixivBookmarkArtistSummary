@@ -12,6 +12,7 @@
 
     const turboMode = false;
     const bookmarkBatchSize = 100;
+    const followBatchSize = 25; //4 illusts per following
     const BANNER = ".sc-x1dm5r-0";
     let uid, lang, token;
     let pageInfo = {};
@@ -91,34 +92,127 @@
         }
     }
 
+    
+    
+    async function fetchFollowings(uid, offset=0, publicationType=null, tagToQuery='') {
+        if (!publicationType){
+            publicationType = window.location.href.includes("rest=hide") ? "hide" : "show";
+        }
+        const followingsRaw = await fetch(
+            `/ajax/user/${uid}` +
+            `/following?tag=${tagToQuery}` +
+            `&offset=${offset}&limit=${followBatchSize}&rest=${publicationType}`
+        );
+        if (!turboMode) await delay(500);
+        const followingsRes = await followingsRaw.json();
+        if (!followingsRaw.ok || followingsRes.error === true) {
+            return alert(
+            `Fail to fetch user followings\n` +
+                decodeURI(followingsRes.message)
+            );
+        }
+        const followings = followingsRes.body;
+        followings.count = followings["users"].length;
+        const users = followings["users"]
+        .map((user) => {
+            if (user.userName === "-----") return null;
+            user.id = user.userId;
+            user.name = user.userName;
+            user.url = `https://www.pixiv.net/${lang}/users/${user.userId}`;
+            return user;
+        })
+        .filter((user) => user);// && user.following && !user.isBlocking); 
+        followings["users"] = users;
+        return followings;
+    }
+
+    async function fetchAllFollowings(uid, publicationType=null){
+        let total, // total followings
+            index = 0; // counter of do-while loop
+        let finalFollowings = null;
+        let allUsers = [];
+        do {
+            const followings = await fetchFollowings(
+                uid,
+                index,
+                publicationType
+            );
+            if (!total) total = followings.total;
+            const users = followings["users"];
+            allUsers = allUsers.concat(users);
+            index += followings.count || followings["users"].length;
+            finalFollowings = updateObject(finalFollowings, followings);
+            console.log(`Fetching followings... ${index}/${total}`)
+            console.log(followings);
+        } while (index < total);
+        finalFollowings["users"] = allUsers;
+        console.log(finalFollowings);
+        return finalFollowings;
+    }
+    
     // Function to bulk follow or unfollow artists based on minimum bookmark count
-    function bulkAction(minBookmarks, action) {
+    async function bulkFollow(minBookmarks) {
         // Filter artists based on the bookmark count
         const selectedArtists = sortedArtists.filter((artist) => {
             const bookmarkCount = countIllusts(artist);
-            return action === 'follow'
-                ? bookmarkCount >= minBookmarks
-                : bookmarkCount < minBookmarks;
-        });
+            return bookmarkCount >= minBookmarks;
+        }).map((artist) => artist.id);
 
         if (selectedArtists.length === 0) {
-            alert('No artists meet the criteria.');
+            alert('No artist meet the criteria.');
             return;
         }
 
         // Show confirmation dialog
         const confirmation = confirm(
-            `Are you sure you want to ${action} ${selectedArtists.length} artists?`
+            `Are you sure you want to follow ${selectedArtists.length} artists?`
         );
         if (!confirmation) return;
 
-        // Collect artist IDs and perform follow/unfollow action
-        const artistIds = selectedArtists.map((artist) => artist.id);
-        if (action === 'follow') {
-            followMany(artistIds);
-        } else if (action === 'unfollow') {
-            unfollowMany(artistIds);
+        followMany(selectedArtists);
+    }
+    
+    // Function to bulk follow or unfollow artists based on minimum bookmark count
+    async function bulkUnfollow(minBookmarks) {
+        // Filter artists based on the bookmark count
+        let selectedArtists = sortedArtists.filter((artist) => {
+            const bookmarkCount = countIllusts(artist);
+            return bookmarkCount < minBookmarks;
+        }).map((artist) => artist.id);
+
+        
+        // Show confirmation dialog
+        const fetchMore = confirm(
+            `Do you want to also unfollow artists not in your bookmarks?`
+        );
+        if (fetchMore){
+            let protectedArtists = sortedArtists.filter((artist) => {
+                const bookmarkCount = countIllusts(artist);
+                return bookmarkCount >= minBookmarks;
+            }).map((artist) => artist.id);
+            protectedArtists = new Set(protectedArtists);
+    
+            let followings = await fetchAllFollowings(uid);
+            followings = followings.users.map((artist) => artist.id);
+            selectedArtists = selectedArtists.concat(followings);
+            selectedArtists = Array.from(new Set(selectedArtists));
+            console.log(`Pre filter: ${selectedArtists.length}`);
+            selectedArtists = selectedArtists.filter((artist) => !protectedArtists.has(artist));
+            console.log(`Post filter: ${selectedArtists.length}`);
         }
+
+        if (selectedArtists.length === 0) {
+            alert('No artist meet the criteria.');
+            return;
+        }
+
+        // Show confirmation dialog
+        const confirmation = confirm(
+            `Are you sure you want to unfollow ${selectedArtists.length} artists?`
+        );
+        if (!confirmation) return;
+
+        unfollowMany(selectedArtists);
     }
     
     async function fetchTokenPolyfill() {
@@ -206,10 +300,10 @@
         let allTags = {}
         do {
             const bookmarks = await fetchBookmarks(
-            uid,
-            tagToQuery,
-            index,
-            publicationType
+                uid,
+                tagToQuery,
+                index,
+                publicationType
             );
             if (!total) total = bookmarks.total;
             const works = bookmarks["works"];
@@ -217,7 +311,7 @@
             allTags = updateObject(allTags, bookmarks["bookmarkTags"]);
             index += bookmarks.count || bookmarks["works"].length;
             finalBookmarks = updateObject(finalBookmarks, bookmarks);
-            console.log(`Fetching... ${index}/${total}`)
+            console.log(`Fetching bookmarks... ${index}/${total}`)
         } while (index < total);
         finalBookmarks["works"] = allWorks;
         finalBookmarks["bookmarkTags"] = allTags;
@@ -479,7 +573,7 @@
                     alert('Please enter a valid number for minimum bookmarks.');
                     return;
                 }
-                bulkAction(minBookmarks, 'follow');
+                bulkFollow(minBookmarks);
             };
     
             // Unfollow button
@@ -491,7 +585,7 @@
                     alert('Please enter a valid number for minimum bookmarks.');
                     return;
                 }
-                bulkAction(minBookmarks, 'unfollow');
+                bulkUnfollow(minBookmarks);
             };
             // Append elements to the bulk action div
             bulkActionDiv.appendChild(minCountInput);
