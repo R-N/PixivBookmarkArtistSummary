@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pixiv Bookmark Artist Summary
 // @namespace    http://tampermonkey.net/
-// @version      0.1
+// @version      0.2
 // @description  Count illustrations per artist in bookmarks
 // @match        https://www.pixiv.net/*/bookmarks*
 // @grant        unsafeWindow
