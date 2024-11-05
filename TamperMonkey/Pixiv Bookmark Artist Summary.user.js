@@ -255,10 +255,9 @@
             total += 1;
         });
         console.log(`Processed ${total} illusts from ${Object.keys(artists).length} artists`);
-        console.log(artists);
-        //requestAnimationFrame(renderSummary);
-        renderSummary();
-        console.log("Rendered");
+        sortedArtists = Object.values(artists).sort(illustComparator);
+        requestAnimationFrame(renderSummary);
+        //renderSummary();
     }
 
 
