@@ -4,11 +4,126 @@
 // @version      0.1
 // @description  Count illustrations per artist in bookmarks
 // @match        https://www.pixiv.net/*/bookmarks*
-// @grant        none
+// @grant        unsafeWindow
 // ==/UserScript==
 
 (function() {
     'use strict';
+
+    const turboMode = false;
+    const bookmarkBatchSize = 100;
+    const BANNER = ".sc-x1dm5r-0";
+    let uid, lang, token;
+    let pageInfo = {};
+
+    let unsafeWindow_ = unsafeWindow;
+    
+    function delay(ms) {
+        return new Promise((res) => setTimeout(res, ms));
+    }
+    
+    async function fetchTokenPolyfill() {
+        // get token
+        const userRaw = await fetch(
+            "/bookmark_add.php?type=illust&illust_id=83540927"
+        );
+        if (!userRaw.ok) {
+            console.log(`获取身份信息失败
+            Fail to fetch user information`);
+            throw new Error();
+        }
+        const userRes = await userRaw.text();
+        const tokenPos = userRes.indexOf("pixiv.context.token");
+        const tokenEnd = userRes.indexOf(";", tokenPos);
+        return userRes.slice(tokenPos, tokenEnd).split('"')[1];
+    }
+    async function initializeVariables() {
+        async function polyfill() {
+            try {
+                const dataLayer = unsafeWindow_["dataLayer"][0];
+                uid = dataLayer["user_id"];
+                lang = dataLayer["lang"];
+                token = await fetchTokenPolyfill();
+                pageInfo.userId = window.location.href.match(/users\/(\d+)/)?.[1];
+                pageInfo.client = { userId: uid, lang, token };
+            } catch (err) {
+                console.log(err);
+                console.log("[Label Bookmarks] Initializing Failed");
+            }
+        }
+
+        try {
+            pageInfo = Object.values(document.querySelector(BANNER))[0]["return"][
+                "return"
+            ]["memoizedProps"];
+            uid = pageInfo["client"]["userId"];
+            token = pageInfo["client"]["token"];
+            lang = pageInfo["client"]["lang"];
+            if (!uid || !token || !lang) await polyfill();
+        } catch (err) {
+            console.log(err);
+            await polyfill();
+        }
+    }
+    async function fetchBookmarks(uid, tagToQuery='', offset=0, publicationType=null) {
+        if (!publicationType){
+            publicationType = window.location.href.includes("rest=hide") ? "hide" : "show";
+        }
+        const bookmarksRaw = await fetch(
+            `/ajax/user/${uid}` +
+            `/illusts/bookmarks?tag=${tagToQuery}` +
+            `&offset=${offset}&limit=${bookmarkBatchSize}&rest=${publicationType}`
+        );
+        if (!turboMode) await delay(500);
+        const bookmarksRes = await bookmarksRaw.json();
+        if (!bookmarksRaw.ok || bookmarksRes.error === true) {
+            return alert(
+            `获取用户收藏夹列表失败\nFail to fetch user bookmarks\n` +
+                decodeURI(bookmarksRes.message)
+            );
+        }
+        const bookmarks = bookmarksRes.body;
+        bookmarks.count = bookmarks["works"].length;
+        const works = bookmarks["works"]
+        .map((work) => {
+            if (work.title === "-----") return null;
+            work.bookmarkId = work["bookmarkData"]["id"];
+            work.associatedTags = bookmarks["bookmarkTags"][work.bookmarkId] || []; 
+            work.associatedTags = work.associatedTags.filter(
+                (tag) => tag != "未分類"
+            );
+            return work;
+        })
+        .filter((work) => work && work.associatedTags.length); 
+        bookmarks["works"] = works;
+        return bookmarks;
+    }
+
+    async function fetchAllBookmarks(uid, tagToQuery='', publicationType=null){
+        let total, // total bookmarks of specific tag
+            index = 0; // counter of do-while loop
+        let finalBookmarks = null;
+        let allWorks = [];
+        let allTags = {}
+        do {
+            const bookmarks = await fetchBookmarks(
+            uid,
+            tagToQuery,
+            index,
+            publicationType
+            );
+            if (!total) total = bookmarks.total;
+            const works = bookmarks["works"];
+            allWorks = allWorks.concat(works);
+            allTags = updateObject(allTags, bookmarks["bookmarkTags"]);
+            index += bookmarks.count || bookmarks["works"].length;
+            finalBookmarks = updateObject(finalBookmarks, bookmarks);
+            console.log(`Fetching... ${index+1}/${total}`)
+        } while (index < total);
+        finalBookmarks["works"] = allWorks;
+        finalBookmarks["bookmarkTags"] = allTags;
+        return finalBookmarks;
+    }
 
     // Function to count bookmarks by artist
     let artists = {};
@@ -18,6 +133,35 @@
     // Function to check if the bookmarks list has changed
     const countIllusts = (artist) => Object.keys(artist.illustrations).length;
     const illustComparator = (a, b) => countIllusts(b) - countIllusts(a);
+
+    function updateObject(target, source){
+        if (!target) return source;
+        //target = {...target, ...source};
+        Object.assign(target, source);
+        return target;
+    }
+
+    function saveArtist(artist){
+        let artistId = artist.id;
+        if (artists[artistId]) {
+            artists[artistId] = updateObject(artists[artistId], artist);
+            artist = artists[artistId];
+        }else{
+            artist.illustrations = {};
+            artists[artistId] = artist;
+        }
+        return artist;
+    }
+    function saveIllust(artist, illust){
+        let illustId = illust.id;
+        if (artist.illustrations[illustId]) {
+            artist.illustrations[illustId] = updateObject(artist.illustrations[illustId], illust);
+            illust = artist.illustrations[illustId];
+        }else{
+            artist.illustrations[illustId] = illust;
+        }
+        return illust;
+    }
 
     function summarizeBookmarks() {
         const items = document.querySelectorAll('ul li[size] a[data-gtm-value]:not([data-gtm-user-id])');
@@ -64,19 +208,13 @@
                     }
                 }
             }
-
             if (artistId) {
-                if (!artists[artistId]) {
-                    artists[artistId] = {
-                        id: artistId,
-                        name: artistName,
-                        url: artistLink,
-                        //count: 0,
-                        illustrations: {},
-                    };
+                let artist = {
+                    id: artistId,
+                    name: artistName,
+                    url: artistLink,
                 }
-                let artist = artists[artistId];
-                //artist.count++;
+                artist = saveArtist(artist);
                 let illust = {
                     id: illustId,
                     title: illustTitle,
@@ -84,13 +222,43 @@
                     url: illustLink,
                     img: illustImg,
                 };
-                artist.illustrations[illustId] = illust;
+                illust = saveIllust(artist, illust);
             }
         });
         sortedArtists = Object.values(artists).sort(illustComparator);
 
         requestAnimationFrame(renderSummary);
         //renderSummary();
+    }
+
+    async function summarizeAllBookmarks(){
+        const bookmarks = await fetchAllBookmarks(uid);
+        console.log(`Fetched ${bookmarks.works.length} bookmarks`);
+        
+        let total = 0;
+        bookmarks["works"].forEach((work) => {
+            let artist = {
+                id: work.userId,
+                name: work.userName,
+                url: `https://www.pixiv.net/${lang}/users/${work.userId}`,
+            }
+            artist = saveArtist(artist);
+            let illust = {
+                id: work.id,
+                title: work.title,
+                alt: work.alt,
+                url: `https://www.pixiv.net/${lang}/artworks/${work.id}`,
+                img: work.url,
+            };
+            illust = updateObject(illust, work);
+            illust = saveIllust(artist, illust);
+            total += 1;
+        });
+        console.log(`Processed ${total} illusts from ${Object.keys(artists).length} artists`);
+        console.log(artists);
+        //requestAnimationFrame(renderSummary);
+        renderSummary();
+        console.log("Rendered");
     }
 
 
@@ -140,6 +308,7 @@
         //Object.entries(artists).forEach(([id, artist]) => {
         Object.values(sortedArtists).forEach((artist) => {
             let count = countIllusts(artist);
+            if (!count) return;
             // Create a list item for each artist
             const artistItem = document.createElement('li');
             const artistLink = document.createElement('a');
@@ -182,13 +351,19 @@
         const logButton = document.createElement('button');
         logButton.innerHTML = `Log Items`;
         logButton.addEventListener('click', () => {
-            //console.log(JSON.stringify(artists));
             console.log(JSON.stringify(sortedArtists));
+            console.log(sortedArtists);
+        });
+        const fetchButton = document.createElement('button');
+        fetchButton.innerHTML = `Fetch All`;
+        fetchButton.addEventListener('click', () => {
+            setTimeout(summarizeAllBookmarks, 100);
         });
 
         summaryContent.appendChild(artistContainer);
         summaryContent.appendChild(totalContainer);
         summaryContent.appendChild(logButton);
+        summaryContent.appendChild(fetchButton);
         summaryDiv.appendChild(title);
         summaryDiv.appendChild(summaryContent);
         document.body.appendChild(summaryDiv);
@@ -232,7 +407,8 @@
 
     // Initial summary calculation when the page loads
     window.addEventListener('load', () => {
-        setTimeout(() => {
+        setTimeout(async () => {
+            await initializeVariables();
             debouncedSummarize();
             previousHash = location.href; // Set initial hash
             setInterval(checkForChanges, 3000); // Poll every second for URL changes
