@@ -22,6 +22,105 @@
         return new Promise((res) => setTimeout(res, ms));
     }
     
+    async function unfollow(id){
+        const user_url = `https://www.pixiv.net/${lang}/users/${id}`;
+        const payload = { 
+            mode: "del",
+            type: "bookuser",
+            id: `${id}`,
+        };
+        const response = await fetch("https://www.pixiv.net/rpc_group_setting.php", {
+            headers: {
+                accept: "application/json",
+                //"content-type": "application/json; charset=utf-8",
+                "content-type": "application/x-www-form-urlencoded; charset=utf-8",
+                "x-csrf-token": token,
+                "referer": user_url,
+            },
+            //body: JSON.stringify(payload),
+            body: new URLSearchParams(payload).toString(),
+            method: "POST",
+        });
+        if (response.ok) {
+            console.log(`Unfollowed ${user_url}`);
+        }else{
+            console.error(`Unfollow failed for ${user_url} with status: ${response.status}`);
+        }
+        await delay(500);
+    }
+    async function unfollowMany(ids){
+        for (const id of ids) {
+            await unfollow(id);
+        }
+    }
+    async function follow(id, restrict=null){
+        if (restrict === null){
+            restrict = window.location.href.includes("rest=hide") ? 1 : 0;
+        }
+        const user_url = `https://www.pixiv.net/${lang}/users/${id}`;
+        const payload = { 
+            mode: "add",
+            type: "user",
+            user_id: `${id}`,
+            tag: "",
+            restrict: restrict,
+            format: "json"
+        };
+        const response = await fetch("https://www.pixiv.net/bookmark_add.php", {
+            headers: {
+                accept: "application/json",
+                //"content-type": "application/json; charset=utf-8",
+                "content-type": "application/x-www-form-urlencoded; charset=utf-8",
+                "x-csrf-token": token,
+                "referer": user_url,
+            },
+            //body: JSON.stringify(payload),
+            body: new URLSearchParams(payload).toString(),
+            method: "POST",
+        });
+        if (response.ok) {
+            console.log(`Followed ${user_url} ${restrict ? "privately" : ""}`);
+        }else{
+            console.error(`Follow failed for ${user_url} with status: ${response.status}`);
+        }
+        await delay(500);
+    }
+    async function followMany(ids, restrict=null){
+        for (const id of ids) {
+            await follow(id, restrict=restrict);
+        }
+    }
+
+    // Function to bulk follow or unfollow artists based on minimum bookmark count
+    function bulkAction(minBookmarks, action) {
+        // Filter artists based on the bookmark count
+        const selectedArtists = sortedArtists.filter((artist) => {
+            const bookmarkCount = countIllusts(artist);
+            return action === 'follow'
+                ? bookmarkCount >= minBookmarks
+                : bookmarkCount < minBookmarks;
+        });
+
+        if (selectedArtists.length === 0) {
+            alert('No artists meet the criteria.');
+            return;
+        }
+
+        // Show confirmation dialog
+        const confirmation = confirm(
+            `Are you sure you want to ${action} ${selectedArtists.length} artists?`
+        );
+        if (!confirmation) return;
+
+        // Collect artist IDs and perform follow/unfollow action
+        const artistIds = selectedArtists.map((artist) => artist.id);
+        if (action === 'follow') {
+            followMany(artistIds);
+        } else if (action === 'unfollow') {
+            unfollowMany(artistIds);
+        }
+    }
+    
     async function fetchTokenPolyfill() {
         // get token
         const userRaw = await fetch(
@@ -118,7 +217,7 @@
             allTags = updateObject(allTags, bookmarks["bookmarkTags"]);
             index += bookmarks.count || bookmarks["works"].length;
             finalBookmarks = updateObject(finalBookmarks, bookmarks);
-            console.log(`Fetching... ${index+1}/${total}`)
+            console.log(`Fetching... ${index}/${total}`)
         } while (index < total);
         finalBookmarks["works"] = allWorks;
         finalBookmarks["bookmarkTags"] = allTags;
@@ -129,6 +228,7 @@
     let artists = {};
     let sortedArtists = [];
     let debounceTimer = null;
+    let fetchedAll = false;
 
     // Function to check if the bookmarks list has changed
     const countIllusts = (artist) => Object.keys(artist.illustrations).length;
@@ -256,6 +356,7 @@
         });
         console.log(`Processed ${total} illusts from ${Object.keys(artists).length} artists`);
         sortedArtists = Object.values(artists).sort(illustComparator);
+        fetchedAll = true;
         requestAnimationFrame(renderSummary);
         //renderSummary();
     }
@@ -359,10 +460,51 @@
             setTimeout(summarizeAllBookmarks, 100);
         });
 
+        const bulkActionDiv = document.createElement('div');
+        if (fetchedAll){
+            // Create UI for bulk follow/unfollow
+            bulkActionDiv.style.marginTop = '10px';
+            const minCountInput = document.createElement('input');
+            minCountInput.type = 'number';
+            minCountInput.placeholder = 'Min bookmarks';
+            minCountInput.style.width = '100px';
+            minCountInput.style.marginRight = '5px';
+    
+            // Follow button
+            const followButton = document.createElement('button');
+            followButton.innerText = 'Follow';
+            followButton.onclick = () => {
+                const minBookmarks = parseInt(minCountInput.value, 10);
+                if (isNaN(minBookmarks)) {
+                    alert('Please enter a valid number for minimum bookmarks.');
+                    return;
+                }
+                bulkAction(minBookmarks, 'follow');
+            };
+    
+            // Unfollow button
+            const unfollowButton = document.createElement('button');
+            unfollowButton.innerText = 'Unfollow';
+            unfollowButton.onclick = () => {
+                const minBookmarks = parseInt(minCountInput.value, 10);
+                if (isNaN(minBookmarks)) {
+                    alert('Please enter a valid number for minimum bookmarks.');
+                    return;
+                }
+                bulkAction(minBookmarks, 'unfollow');
+            };
+            // Append elements to the bulk action div
+            bulkActionDiv.appendChild(minCountInput);
+            bulkActionDiv.appendChild(followButton);
+            bulkActionDiv.appendChild(unfollowButton);
+        }
+
         summaryContent.appendChild(artistContainer);
         summaryContent.appendChild(totalContainer);
         summaryContent.appendChild(logButton);
         summaryContent.appendChild(fetchButton);
+        // Add the bulk action div to the summary UI
+        summaryContent.appendChild(bulkActionDiv);
         summaryDiv.appendChild(title);
         summaryDiv.appendChild(summaryContent);
         document.body.appendChild(summaryDiv);
