@@ -5,6 +5,7 @@
 // @description  Count illustrations per artist in bookmarks
 // @match        https://www.pixiv.net/*/bookmarks*
 // @grant        unsafeWindow
+// @license      MIT
 // ==/UserScript==
 
 (function() {
