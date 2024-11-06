@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pixiv Bookmark Artist Summary
 // @namespace    http://tampermonkey.net/
-// @version      0.3
+// @version      0.3.1
 // @description  Count illustrations per artist in bookmarks
 // @match        https://www.pixiv.net/*/bookmarks*
 // @grant        unsafeWindow
@@ -442,10 +442,10 @@
                 id: work.id,
                 title: work.title,
                 alt: work.alt,
-                url: `https://www.pixiv.net/${lang}/artworks/${work.id}`,
                 img: work.url,
             };
             illust = updateObject(illust, work);
+            illust["url"] = `https://www.pixiv.net/${lang}/artworks/${work.id}`;
             illust = saveIllust(artist, illust);
             total += 1;
         });
