@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pixiv Bookmark Artist Summary
 // @namespace    http://tampermonkey.net/
-// @version      0.3.1
+// @version      0.4
 // @description  Count illustrations per artist in bookmarks
 // @match        https://www.pixiv.net/*/bookmarks*
 // @grant        unsafeWindow
@@ -484,7 +484,8 @@
         const summaryContent = document.createElement('div');
         summaryContent.style.display = 'none'; // Initially hidden
         summaryContent.style.padding = '10px';
-        summaryContent.style.maxHeight = '300px'; // Set a maximum height
+        summaryContent.style.maxHeight = '400px'; // Set a maximum height
+        summaryContent.style.minWidth = '400px';
         summaryContent.style.overflowY = 'auto'; // Enable vertical scrolling
 
         // Toggle visibility of the artist container when the title is clicked
@@ -499,46 +500,109 @@
         });
 
         let totalCount = 0;
-        const artistContainer = document.createElement('ol');
+        const artistContainer = document.createElement('div');
+        artistContainer.style.display = 'grid';
+        artistContainer.style.gridTemplateColumns = 'repeat(auto-fill, minmax(100px, 1fr))';
+        artistContainer.style.gap = '10px';
+        // Keep track of the currently expanded tile
+        let expandedTile = null;
         //Object.entries(artists).forEach(([id, artist]) => {
         Object.values(sortedArtists).forEach((artist) => {
             let count = countIllusts(artist);
             if (!count) return;
-            // Create a list item for each artist
-            const artistItem = document.createElement('li');
+
+            const artistTile = document.createElement('div');
+            artistTile.style.backgroundColor = '#f0f0f0';
+            artistTile.style.padding = '5px';
+            artistTile.style.borderRadius = '5px';
+            artistTile.style.textAlign = 'center';
+            artistTile.style.cursor = 'pointer';
+            artistTile.style.transition = 'all 0.3s ease';
+            artistTile.style.position = "relative"; /*add this*/
+            artistTile.dataset.artistName = artist.name;
+
+            const artistText = document.createElement('div');
             const artistLink = document.createElement('a');
             artistLink.href = artist.url;
-            artistLink.innerText = artist.name;
+            artistLink.innerText = `${artist.name}`;
+            artistLink.style.textDecoration = 'none';
+            artistLink.style.color = 'black';
+            artistLink.style.display = 'block';
+            artistText.appendChild(artistLink);
+    
+            const artistCount = document.createElement('div');
+            artistCount.innerText = `(${count})`;
+            artistText.appendChild(artistCount);
 
-            // Create a span for count and add click event to toggle illustrations
-            const countSpan = document.createElement('span');
-            countSpan.innerText = `: ${count}`;
-            countSpan.style.cursor = 'pointer'; // Change cursor to pointer
-            countSpan.style.marginLeft = '5px';
+            // Unfollow button
+            const unfollowButtonTile = document.createElement('button');
+            unfollowButtonTile.innerText = 'Un';
+            unfollowButtonTile.onclick = (e) => {
+                e.stopPropagation(); // Prevent triggering tile click events
+                unfollow(artist.id); // Unfollow action
+            };
 
-            // Create a container for illustrations and initially hide it
-            const illustContainer = document.createElement('ul');
-            illustContainer.style.display = 'none'; // Initially hidden
-            illustContainer.style.paddingLeft = '20px'; // Indent the illustrations
+            // Follow button
+            const followButtonTile = document.createElement('button');
+            followButtonTile.innerText = 'Follow';
+            followButtonTile.onclick = (e) => {
+                e.stopPropagation(); // Prevent triggering tile click events
+                follow(artist.id); // Follow action
+            }
 
+            // Append buttons to artistTile
+            const artistTileActions = document.createElement('div');
+            artistTileActions.classList.add("artist-tile-actions");
+            artistTileActions.style.position = 'absolute';
+            artistTileActions.style.top = '5px';
+            artistTileActions.style.right = '5px';
+            artistTileActions.style.display = 'none'; // Hidden by default
+            artistTileActions.appendChild(unfollowButtonTile);
+            artistTileActions.appendChild(followButtonTile);
+    
+            // Create a container for illustrations (initially hidden)
+            const illustContainer = document.createElement('ol');
+            illustContainer.classList.add("illust-container");
+            illustContainer.style.display = 'none';
+            illustContainer.style.paddingTop = '5px';
+            illustContainer.style.textAlign = 'left';
+    
             // Populate illustrations
             Object.values(artist.illustrations).forEach((illust) => {
                 const illustItem = document.createElement('li');
-                let text = illust.alt || illust.title;
-                illustItem.innerHTML = `<a href="${illust.url}" target="_blank">${text}</a>`;
+                illustItem.style.marginBottom = '5px';
+                illustItem.innerHTML = `<a href="${illust.url}" target="_blank">${illust.alt || illust.title}</a>`;
                 illustContainer.appendChild(illustItem);
             });
-
-            // Append artist link and count span to artist item
-            artistItem.appendChild(artistLink);
-            artistItem.appendChild(countSpan);
-            artistItem.appendChild(illustContainer);
-            artistContainer.appendChild(artistItem);
-
-            // Toggle illustration visibility when count is clicked
-            countSpan.addEventListener('click', () => {
-                illustContainer.style.display = (illustContainer.style.display === 'none') ? 'block' : 'none';
+    
+            // Toggle illustration visibility when tile is clicked
+            artistTile.addEventListener('click', () => {
+                if (expandedTile && expandedTile !== artistTile) {
+                    // Collapse the previously expanded tile
+                    expandedTile.style.gridColumn = '';
+                    expandedTile.querySelector('.illust-container').style.display = 'none';
+                    expandedTile.querySelector('.artist-tile-actions').style.display = 'none';
+                }
+                if (illustContainer.style.display === 'none') {
+                    // Expand this tile
+                    artistTile.style.gridColumn = '1 / -1'; // Full width in grid
+                    illustContainer.style.display = 'block';
+                    artistTileActions.style.display = 'block'; // Show  button
+                    expandedTile = artistTile;
+                } else {
+                    // Collapse this tile if already expanded
+                    artistTile.style.gridColumn = '';
+                    illustContainer.style.display = 'none';
+                    artistTileActions.style.display = 'none'; // Hide  button
+                    expandedTile = null;
+                }
             });
+
+
+            artistTile.appendChild(artistText);
+            artistTile.appendChild(artistTileActions);
+            artistTile.appendChild(illustContainer);  // Append hidden illustration container to each tile
+            artistContainer.appendChild(artistTile);
             totalCount += count;
         });
         const totalContainer = document.createElement('p');
